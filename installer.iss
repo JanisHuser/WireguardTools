@@ -70,12 +70,23 @@ Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"; 
 [Code]
 var
   InstallServicePage: TInputOptionWizardPage;
+  ConfigFilePage: TInputFileWizardPage;
   ResultCode: Integer;
+  WireGuardConfigPath: String;
+  TunnelName: String;
 
 procedure InitializeWizard;
 begin
+  // Create a page to select WireGuard config file
+  ConfigFilePage := CreateInputFilePage(wpSelectTasks,
+    'WireGuard Configuration', 'Select your WireGuard tunnel configuration file',
+    'Please select the .conf file for your WireGuard tunnel. This will be installed and used by the monitor service.');
+  ConfigFilePage.Add('WireGuard configuration file:',
+    'WireGuard Config Files|*.conf|All Files|*.*',
+    '.conf');
+
   // Create a custom page asking if user wants to install service now
-  InstallServicePage := CreateInputOptionPage(wpSelectTasks,
+  InstallServicePage := CreateInputOptionPage(ConfigFilePage.ID,
     'Service Installation', 'Do you want to install and configure the service now?',
     'The installer can automatically configure and start the WireGuard Network Monitor service. ' +
     'If you choose "No", you can run the installation later from the Start Menu.',
@@ -86,6 +97,10 @@ begin
 end;
 
 function PrepareToInstall(var NeedsRestart: Boolean): String;
+var
+  SourceConfigFile: String;
+  DestConfigFile: String;
+  FileName: String;
 begin
   Result := '';
 
@@ -95,13 +110,86 @@ begin
     Result := 'WireGuard is not installed on this system.' + #13#10 +
               'Please install WireGuard first from: https://www.wireguard.com/install/' + #13#10#13#10 +
               'Installation will continue, but the service will not work until WireGuard is installed.';
+    Exit;
+  end;
+
+  // Get the selected config file
+  SourceConfigFile := ConfigFilePage.Values[0];
+
+  if SourceConfigFile <> '' then
+  begin
+    // Extract filename without extension for tunnel name
+    FileName := ExtractFileName(SourceConfigFile);
+    TunnelName := Copy(FileName, 1, Length(FileName) - Length(ExtractFileExt(FileName)));
+
+    // Create WireGuard config directory if it doesn't exist
+    WireGuardConfigPath := ExpandConstant('{pf}\WireGuard\Data\Configurations');
+    if not DirExists(WireGuardConfigPath) then
+      ForceDirectories(WireGuardConfigPath);
+
+    // Copy the config file
+    DestConfigFile := WireGuardConfigPath + '\' + FileName;
+
+    if FileExists(DestConfigFile) then
+    begin
+      if MsgBox('A configuration file with the name "' + FileName + '" already exists. Do you want to overwrite it?',
+                mbConfirmation, MB_YESNO) = IDNO then
+      begin
+        Result := 'Installation cancelled. Configuration file already exists.';
+        Exit;
+      end;
+    end;
+
+    try
+      FileCopy(SourceConfigFile, DestConfigFile, False);
+      Log('Config file copied from: ' + SourceConfigFile + ' to: ' + DestConfigFile);
+    except
+      Result := 'Failed to copy configuration file. Please check permissions.';
+      Exit;
+    end;
+  end
+  else if InstallServicePage.Values[0] then
+  begin
+    Result := 'No WireGuard configuration file selected. Please select a .conf file to continue.';
   end;
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
+var
+  ConfigPath: String;
+  UpdateScript: String;
+  BackupConfigPath: String;
 begin
   if CurStep = ssPostInstall then
   begin
+    // Update WireGuardNetworkMonitor.ps1 with the tunnel name and copy config to app folder
+    if TunnelName <> '' then
+    begin
+      ConfigPath := WireGuardConfigPath + '\' + TunnelName + '.conf';
+
+      // Copy the config file to the installation directory as backup
+      BackupConfigPath := ExpandConstant('{app}\' + TunnelName + '.conf');
+      if FileExists(ConfigPath) then
+      begin
+        FileCopy(ConfigPath, BackupConfigPath, False);
+        Log('Config file backed up to: ' + BackupConfigPath);
+      end;
+
+      // Create a temporary PowerShell script to update the config
+      UpdateScript := ExpandConstant('{tmp}\update_config.ps1');
+      SaveStringToFile(UpdateScript,
+        '$configFile = "' + ExpandConstant('{app}\WireGuardNetworkMonitor.ps1') + '"' + #13#10 +
+        '$content = Get-Content $configFile -Raw' + #13#10 +
+        '$content = $content -replace ''\$WireGuardInterface = ".*?"'', ''$WireGuardInterface = "' + TunnelName + '"''' + #13#10 +
+        'Set-Content -Path $configFile -Value $content', False);
+
+      Exec('powershell.exe',
+           '-ExecutionPolicy Bypass -NoProfile -File "' + UpdateScript + '"',
+           '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+
+      DeleteFile(UpdateScript);
+    end;
+
     // If user chose to install service now
     if InstallServicePage.Values[0] then
     begin
@@ -111,7 +199,8 @@ begin
               '', SW_SHOW, ewWaitUntilTerminated, ResultCode) then
       begin
         if ResultCode = 0 then
-          MsgBox('Service installation completed successfully!', mbInformation, MB_OK)
+          MsgBox('Service installation completed successfully!' + #13#10 +
+                 'WireGuard tunnel: ' + TunnelName, mbInformation, MB_OK)
         else
           MsgBox('Service installation encountered some issues. Please check the installation window for details.', mbError, MB_OK);
       end

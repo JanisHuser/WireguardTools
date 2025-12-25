@@ -22,15 +22,42 @@ function Write-Log {
 }
 
 function Test-HomeNetwork {
-    # Method 1: Check WiFi SSID
+    # Method 1: Check WiFi SSID using multiple approaches
     try {
-        $wifiProfiles = netsh wlan show interfaces
-        if ($wifiProfiles -match "SSID\s+:\s+(.+)") {
-            $currentSSID = $matches[1].Trim()
-            if ($currentSSID -eq $HomeNetworkSSID) {
-                Write-Log "Connected to home network via WiFi: $currentSSID"
-                return $true
+        $currentSSID = $null
+
+        # Try netsh first
+        $wifiOutput = netsh wlan show interfaces 2>&1
+        if ($wifiOutput) {
+            # Match SSID line more flexibly (handles "SSID" and " SSID")
+            if ($wifiOutput -match "^\s*SSID\s*:\s*(.+)$") {
+                $currentSSID = $matches[1].Trim()
+                Write-Log "Detected SSID via netsh: $currentSSID"
             }
+        }
+
+        # If netsh failed, try PowerShell cmdlet
+        if (!$currentSSID) {
+            try {
+                $wlanInterface = Get-NetAdapter | Where-Object { $_.MediaType -eq "802.11" -and $_.Status -eq "Up" } | Select-Object -First 1
+                if ($wlanInterface) {
+                    $ssidQuery = (netsh wlan show interfaces name="$($wlanInterface.Name)") -match "^\s*SSID\s*:\s*(.+)$"
+                    if ($ssidQuery) {
+                        $currentSSID = $matches[1].Trim()
+                        Write-Log "Detected SSID via adapter query: $currentSSID"
+                    }
+                }
+            } catch {
+                Write-Log "PowerShell SSID detection failed: $_"
+            }
+        }
+
+        # Check if we found the home SSID
+        if ($currentSSID -and $currentSSID -eq $HomeNetworkSSID) {
+            Write-Log "Connected to home network via WiFi: $currentSSID"
+            return $true
+        } elseif ($currentSSID) {
+            Write-Log "Connected to different WiFi: $currentSSID (home is: $HomeNetworkSSID)"
         }
     } catch {
         Write-Log "Could not check WiFi SSID: $_"
@@ -38,11 +65,13 @@ function Test-HomeNetwork {
 
     # Method 2: Check default gateway
     try {
-        $gateway = (Get-NetRoute -DestinationPrefix "0.0.0.0/0" | 
+        $gateway = (Get-NetRoute -DestinationPrefix "0.0.0.0/0" -ErrorAction SilentlyContinue |
                    Select-Object -First 1).NextHop
         if ($gateway -eq $HomeNetworkGateway) {
             Write-Log "Connected to home network via gateway: $gateway"
             return $true
+        } elseif ($gateway) {
+            Write-Log "Gateway is $gateway (home is: $HomeNetworkGateway)"
         }
     } catch {
         Write-Log "Could not check gateway: $_"

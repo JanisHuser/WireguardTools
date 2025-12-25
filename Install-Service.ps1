@@ -106,12 +106,28 @@ Write-Host ""
 # Detect current network SSID
 $detectedSSID = "Unknown"
 try {
-    $wifiProfiles = netsh wlan show interfaces
-    if ($wifiProfiles -match "SSID\s+:\s+(.+)") {
+    # Try netsh first
+    $wifiOutput = netsh wlan show interfaces 2>&1 | Out-String
+
+    # Match SSID line more flexibly
+    if ($wifiOutput -match "(?m)^\s*SSID\s*:\s*(.+)$") {
         $detectedSSID = $matches[1].Trim()
+        Write-Host "Detected WiFi SSID: $detectedSSID" -ForegroundColor Green
+    } else {
+        # Try using Get-NetAdapter as fallback
+        $wlanInterface = Get-NetAdapter | Where-Object { $_.MediaType -eq "802.11" -and $_.Status -eq "Up" } | Select-Object -First 1
+        if ($wlanInterface) {
+            $interfaceOutput = netsh wlan show interfaces name="$($wlanInterface.Name)" 2>&1 | Out-String
+            if ($interfaceOutput -match "(?m)^\s*SSID\s*:\s*(.+)$") {
+                $detectedSSID = $matches[1].Trim()
+                Write-Host "Detected WiFi SSID: $detectedSSID" -ForegroundColor Green
+            }
+        } else {
+            Write-Host "No active WiFi adapter found" -ForegroundColor Yellow
+        }
     }
 } catch {
-    Write-Host "Warning: Could not detect WiFi SSID" -ForegroundColor Yellow
+    Write-Host "Warning: Could not detect WiFi SSID - $_" -ForegroundColor Yellow
 }
 
 # Detect current gateway
@@ -145,16 +161,36 @@ if ($useDetected -eq "Y" -or $useDetected -eq "y") {
 
 # Get WireGuard interface name
 Write-Host ""
-Write-Host "Available WireGuard tunnels:" -ForegroundColor Cyan
+Write-Host "Available WireGuard configuration files:" -ForegroundColor Cyan
+$configPath = "C:\Program Files\WireGuard\Data\Configurations"
+$configFiles = @()
+if (Test-Path $configPath) {
+    $configFiles = Get-ChildItem -Path $configPath -Filter "*.conf" -ErrorAction SilentlyContinue
+    if ($configFiles) {
+        foreach ($file in $configFiles) {
+            $tunnelName = [System.IO.Path]::GetFileNameWithoutExtension($file.Name)
+            Write-Host "  - $tunnelName" -ForegroundColor White
+        }
+    } else {
+        Write-Host "  No WireGuard configuration files found" -ForegroundColor Yellow
+    }
+} else {
+    Write-Host "  WireGuard configuration directory not found" -ForegroundColor Yellow
+}
+
+# Check for running services as well
+Write-Host ""
+Write-Host "Available WireGuard tunnel services:" -ForegroundColor Cyan
 $wgServices = Get-Service -Name "WireGuardTunnel*" -ErrorAction SilentlyContinue
 if ($wgServices) {
     foreach ($svc in $wgServices) {
         $tunnelName = $svc.Name -replace "WireGuardTunnel\$", ""
-        Write-Host "  - $tunnelName" -ForegroundColor White
+        Write-Host "  - $tunnelName [$($svc.Status)]" -ForegroundColor White
     }
 } else {
-    Write-Host "  No WireGuard tunnels found" -ForegroundColor Yellow
+    Write-Host "  No WireGuard tunnel services found" -ForegroundColor Yellow
 }
+
 Write-Host ""
 $wgInterface = Read-Host "Enter your WireGuard tunnel name (e.g., wg0)"
 
