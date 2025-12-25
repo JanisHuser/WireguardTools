@@ -2,8 +2,7 @@
 # This script monitors network connections and activates WireGuard when not on home network
 
 # Configuration - MODIFY THESE VALUES
-$HomeNetworkSSID = "YourHomeWiFiName"  # Your home WiFi SSID
-$HomeNetworkGateway = "192.168.1.1"    # Your home router's IP (alternative check)
+$HomeNetworkSSID = "YourHomeWiFiName"  # Your home WiFi SSID (case-sensitive)
 $WireGuardConfigPath = "C:\Program Files\WireGuard\Data\Configurations\wg0.conf"  # Full path to your WireGuard .conf file
 $LogPath = "C:\ProgramData\WireGuardMonitor\monitor.log"
 
@@ -22,63 +21,34 @@ function Write-Log {
 }
 
 function Test-HomeNetwork {
-    # Method 1: Check WiFi SSID using multiple approaches
     try {
         $currentSSID = $null
 
-        # Try netsh first
-        $wifiOutput = netsh wlan show interfaces 2>&1
-        if ($wifiOutput) {
-            # Match SSID line more flexibly (handles "SSID" and " SSID")
-            if ($wifiOutput -match "^\s*SSID\s*:\s*(.+)$") {
-                $currentSSID = $matches[1].Trim()
-                Write-Log "Detected SSID via netsh: $currentSSID"
-            }
-        }
+        # Use netsh to get WiFi info - more reliable than PowerShell cmdlets
+        $netshOutput = netsh wlan show interfaces 2>&1 | Out-String
 
-        # If netsh failed, try PowerShell cmdlet
-        if (!$currentSSID) {
-            try {
-                $wlanInterface = Get-NetAdapter | Where-Object { $_.MediaType -eq "802.11" -and $_.Status -eq "Up" } | Select-Object -First 1
-                if ($wlanInterface) {
-                    $ssidQuery = (netsh wlan show interfaces name="$($wlanInterface.Name)") -match "^\s*SSID\s*:\s*(.+)$"
-                    if ($ssidQuery) {
-                        $currentSSID = $matches[1].Trim()
-                        Write-Log "Detected SSID via adapter query: $currentSSID"
-                    }
-                }
-            } catch {
-                Write-Log "PowerShell SSID detection failed: $_"
-            }
-        }
+        # Look for the SSID line - handle variations like "SSID" or " SSID"
+        if ($netshOutput -match '(?m)^\s*SSID\s*:\s*(.+?)\s*$') {
+            $currentSSID = $matches[1]
+            Write-Log "Detected SSID: '$currentSSID'"
 
-        # Check if we found the home SSID
-        if ($currentSSID -and $currentSSID -eq $HomeNetworkSSID) {
-            Write-Log "Connected to home network via WiFi: $currentSSID"
-            return $true
-        } elseif ($currentSSID) {
-            Write-Log "Connected to different WiFi: $currentSSID (home is: $HomeNetworkSSID)"
+            # Compare SSIDs (exact match, case-sensitive)
+            if ($currentSSID -eq $HomeNetworkSSID) {
+                Write-Log "Connected to home network (SSID matches)"
+                return $true
+            } else {
+                Write-Log "Not on home network (current: '$currentSSID', home: '$HomeNetworkSSID')"
+                return $false
+            }
+        } else {
+            Write-Log "Could not detect SSID - no WiFi connection or netsh failed"
+            Write-Log "Raw netsh output: $($netshOutput.Substring(0, [Math]::Min(200, $netshOutput.Length)))"
+            return $false
         }
     } catch {
-        Write-Log "Could not check WiFi SSID: $_"
+        Write-Log "ERROR checking network: $_"
+        return $false
     }
-
-    # Method 2: Check default gateway
-    try {
-        $gateway = (Get-NetRoute -DestinationPrefix "0.0.0.0/0" -ErrorAction SilentlyContinue |
-                   Select-Object -First 1).NextHop
-        if ($gateway -eq $HomeNetworkGateway) {
-            Write-Log "Connected to home network via gateway: $gateway"
-            return $true
-        } elseif ($gateway) {
-            Write-Log "Gateway is $gateway (home is: $HomeNetworkGateway)"
-        }
-    } catch {
-        Write-Log "Could not check gateway: $_"
-    }
-
-    Write-Log "Not on home network"
-    return $false
 }
 
 function Get-WireGuardStatus {
@@ -187,34 +157,45 @@ function Stop-WireGuardTunnel {
 
 function Start-NetworkMonitoring {
     Write-Log "=== WireGuard Network Monitor Service Started ==="
-    
+
     $lastNetworkState = $null
-    
+    $lastWireGuardState = $null
+
     while ($true) {
         try {
             $isHomeNetwork = Test-HomeNetwork
             $wgActive = Get-WireGuardStatus
-            
-            # State change logic
+
+            # Only take action if state has changed
             if ($isHomeNetwork) {
                 # On home network - WireGuard should be OFF
                 if ($wgActive) {
-                    Write-Log "Home network detected - disconnecting WireGuard"
-                    Stop-WireGuardTunnel
+                    if ($lastWireGuardState -ne "stopping") {
+                        Write-Log "Home network detected - disconnecting WireGuard"
+                        Stop-WireGuardTunnel
+                        $lastWireGuardState = "stopping"
+                    }
+                } else {
+                    $lastWireGuardState = "stopped"
                 }
                 $lastNetworkState = "home"
             } else {
                 # Not on home network - WireGuard should be ON
                 if (!$wgActive) {
-                    Write-Log "External network detected - connecting WireGuard"
-                    Start-WireGuardTunnel
+                    if ($lastWireGuardState -ne "starting") {
+                        Write-Log "External network detected - connecting WireGuard"
+                        Start-WireGuardTunnel
+                        $lastWireGuardState = "starting"
+                    }
+                } else {
+                    $lastWireGuardState = "running"
                 }
                 $lastNetworkState = "external"
             }
-            
+
             # Check every 30 seconds
             Start-Sleep -Seconds 30
-            
+
         } catch {
             Write-Log "Error in monitoring loop: $_"
             Start-Sleep -Seconds 60

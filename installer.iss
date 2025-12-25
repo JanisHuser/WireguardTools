@@ -68,7 +68,6 @@ var
   WireGuardConfigPath: String;
   TunnelName: String;
   DetectedSSID: String;
-  DetectedGateway: String;
 
 function DetectSSID: String;
 var
@@ -100,30 +99,6 @@ begin
   end;
 end;
 
-function DetectGateway: String;
-var
-  ResultCode: Integer;
-  TempScript: String;
-  OutputFile: String;
-  Gateway: AnsiString;
-begin
-  Result := '';
-  TempScript := ExpandConstant('{tmp}\get_gateway.ps1');
-  OutputFile := ExpandConstant('{tmp}\gateway.txt');
-
-  SaveStringToFile(TempScript,
-    '$gateway = (Get-NetRoute -DestinationPrefix "0.0.0.0/0" -ErrorAction SilentlyContinue | Select-Object -First 1).NextHop' + #13#10 +
-    'if ($gateway) { $gateway | Out-File "' + OutputFile + '" -Encoding UTF8 }', False);
-
-  if Exec('powershell.exe', '-ExecutionPolicy Bypass -NoProfile -File "' + TempScript + '"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
-  begin
-    if LoadStringFromFile(OutputFile, Gateway) then
-      Result := Trim(String(Gateway));
-    DeleteFile(OutputFile);
-  end;
-  DeleteFile(TempScript);
-end;
-
 procedure InitializeWizard;
 begin
   // Create a page to select WireGuard config file
@@ -136,30 +111,23 @@ begin
 
   // Create network configuration page
   NetworkConfigPage := CreateInputQueryPage(ConfigFilePage.ID,
-    'Network Configuration', 'Configure your home network settings',
-    'The service needs to know your home network to determine when to connect WireGuard.');
+    'Network Configuration', 'Configure your home WiFi network',
+    'The service will connect WireGuard when you are NOT on this WiFi network.');
 
-  NetworkConfigPage.Add('Home WiFi SSID:', False);
-  NetworkConfigPage.Add('Home Gateway IP:', False);
+  NetworkConfigPage.Add('Home WiFi SSID (case-sensitive):', False);
 end;
 
 procedure CurPageChanged(CurPageID: Integer);
 begin
   if CurPageID = NetworkConfigPage.ID then
   begin
-    // Auto-detect network settings when the page is shown
+    // Auto-detect SSID when the page is shown
     DetectedSSID := DetectSSID;
-    DetectedGateway := DetectGateway;
 
     if DetectedSSID <> '' then
       NetworkConfigPage.Values[0] := DetectedSSID
     else
       NetworkConfigPage.Values[0] := 'YourHomeWiFiName';
-
-    if DetectedGateway <> '' then
-      NetworkConfigPage.Values[1] := DetectedGateway
-    else
-      NetworkConfigPage.Values[1] := '192.168.1.1';
   end;
 end;
 
@@ -224,12 +192,10 @@ var
   BackupConfigPath: String;
   InstallServiceScript: String;
   HomeSSID: String;
-  HomeGateway: String;
 begin
   if CurStep = ssPostInstall then
   begin
     HomeSSID := NetworkConfigPage.Values[0];
-    HomeGateway := NetworkConfigPage.Values[1];
 
     // Update WireGuardNetworkMonitor.ps1 with all configuration
     if TunnelName <> '' then
@@ -251,7 +217,6 @@ begin
         '$configPath = "' + ConfigPath + '"' + #13#10 +
         '$content = Get-Content $configFile -Raw' + #13#10 +
         '$content = $content -replace ''\$HomeNetworkSSID = ".*?"'', ''$HomeNetworkSSID = "' + HomeSSID + '"''' + #13#10 +
-        '$content = $content -replace ''\$HomeNetworkGateway = ".*?"'', ''$HomeNetworkGateway = "' + HomeGateway + '"''' + #13#10 +
         '$content = $content -replace ''\$WireGuardConfigPath = ".*?"'', ''$WireGuardConfigPath = "'' + $configPath + ''"''' + #13#10 +
         'Set-Content -Path $configFile -Value $content', False);
 
@@ -264,28 +229,39 @@ begin
       // Create installation script
       InstallServiceScript := ExpandConstant('{tmp}\install_service.ps1');
       SaveStringToFile(InstallServiceScript,
+        '$ErrorActionPreference = "Continue"' + #13#10 +
         '$ServiceName = "WireGuardNetworkMonitor"' + #13#10 +
         '$ScriptPath = "' + ExpandConstant('{app}\WireGuardNetworkMonitor.ps1') + '"' + #13#10 +
         '$NSSMPath = "' + ExpandConstant('{app}\nssm.exe') + '"' + #13#10 +
+        '$LogFile = "C:\ProgramData\WireGuardMonitor\install.log"' + #13#10 +
+        'New-Item -ItemType Directory -Path "C:\ProgramData\WireGuardMonitor" -Force | Out-Null' + #13#10 +
+        'function Write-InstallLog { param($msg) "$(Get-Date -f ''yyyy-MM-dd HH:mm:ss'') - $msg" | Out-File -Append $LogFile }' + #13#10 +
+        'Write-InstallLog "Starting service installation"' + #13#10 +
         '' + #13#10 +
-        '# Download NSSM if not present' + #13#10 +
         'if (!(Test-Path $NSSMPath)) {' + #13#10 +
-        '    $nssmZip = "' + ExpandConstant('{tmp}') + '\nssm.zip"' + #13#10 +
-        '    Invoke-WebRequest -Uri "https://nssm.cc/release/nssm-2.24.zip" -OutFile $nssmZip -UseBasicParsing' + #13#10 +
-        '    Expand-Archive -Path $nssmZip -DestinationPath "' + ExpandConstant('{tmp}') + '" -Force' + #13#10 +
-        '    Copy-Item "' + ExpandConstant('{tmp}') + '\nssm-2.24\win64\nssm.exe" -Destination $NSSMPath' + #13#10 +
+        '    Write-InstallLog "Downloading NSSM..."' + #13#10 +
+        '    try {' + #13#10 +
+        '        $nssmZip = "' + ExpandConstant('{tmp}') + '\nssm.zip"' + #13#10 +
+        '        Invoke-WebRequest -Uri "https://nssm.cc/release/nssm-2.24.zip" -OutFile $nssmZip -UseBasicParsing' + #13#10 +
+        '        Expand-Archive -Path $nssmZip -DestinationPath "' + ExpandConstant('{tmp}') + '" -Force' + #13#10 +
+        '        Copy-Item "' + ExpandConstant('{tmp}') + '\nssm-2.24\win64\nssm.exe" -Destination $NSSMPath' + #13#10 +
+        '        Write-InstallLog "NSSM downloaded successfully"' + #13#10 +
+        '    } catch {' + #13#10 +
+        '        Write-InstallLog "ERROR downloading NSSM: $_"' + #13#10 +
+        '        exit 1' + #13#10 +
+        '    }' + #13#10 +
         '}' + #13#10 +
         '' + #13#10 +
-        '# Remove existing service' + #13#10 +
         '$existing = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue' + #13#10 +
         'if ($existing) {' + #13#10 +
+        '    Write-InstallLog "Removing existing service"' + #13#10 +
         '    Stop-Service -Name $ServiceName -Force -ErrorAction SilentlyContinue' + #13#10 +
         '    Start-Sleep -Seconds 2' + #13#10 +
         '    & $NSSMPath remove $ServiceName confirm' + #13#10 +
         '    Start-Sleep -Seconds 2' + #13#10 +
         '}' + #13#10 +
         '' + #13#10 +
-        '# Install and configure service' + #13#10 +
+        'Write-InstallLog "Installing service with NSSM"' + #13#10 +
         '& $NSSMPath install $ServiceName powershell.exe "-ExecutionPolicy Bypass -NoProfile -File `"$ScriptPath`""' + #13#10 +
         '& $NSSMPath set $ServiceName DisplayName "WireGuard Network Monitor"' + #13#10 +
         '& $NSSMPath set $ServiceName Description "Automatically connects WireGuard VPN when not on home network"' + #13#10 +
@@ -294,8 +270,10 @@ begin
         '& $NSSMPath set $ServiceName AppStderr "C:\ProgramData\WireGuardMonitor\error.log"' + #13#10 +
         '& $NSSMPath set $ServiceName AppRotateFiles 1' + #13#10 +
         '& $NSSMPath set $ServiceName AppRotateBytes 1048576' + #13#10 +
-        'New-Item -ItemType Directory -Path "C:\ProgramData\WireGuardMonitor" -Force | Out-Null' + #13#10 +
-        'Start-Service -Name $ServiceName', False);
+        'Write-InstallLog "Starting service"' + #13#10 +
+        'Start-Service -Name $ServiceName' + #13#10 +
+        '$svc = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue' + #13#10 +
+        'if ($svc.Status -eq "Running") { Write-InstallLog "Service started successfully" } else { Write-InstallLog "WARNING: Service status is $($svc.Status)" }', False);
     end;
   end;
 end;

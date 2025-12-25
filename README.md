@@ -14,9 +14,9 @@ Automatically connects WireGuard VPN when you leave your home network.
 
 ## How It Works
 
-- Detects home network by WiFi SSID or gateway IP
-- Automatically connects WireGuard on external networks
-- Automatically disconnects WireGuard when home
+- Detects home network by WiFi SSID
+- Automatically connects WireGuard when NOT on home WiFi
+- Automatically disconnects WireGuard when on home WiFi
 - Runs as a Windows service (starts on boot)
 
 ## Usage
@@ -45,10 +45,10 @@ Stop-Service WireGuardNetworkMonitor         # Stop service
 **Need to reconfigure?**
 - Edit `C:\Program Files (x86)\WireGuardMonitor\WireGuardNetworkMonitor.ps1`
 - Update these values:
-  - `$HomeNetworkSSID` - Your home WiFi name
-  - `$HomeNetworkGateway` - Your home router IP
+  - `$HomeNetworkSSID` - Your home WiFi name (case-sensitive)
   - `$WireGuardConfigPath` - Path to your .conf file
 - Restart: `Restart-Service WireGuardNetworkMonitor`
+- Check install log: `C:\ProgramData\WireGuardMonitor\install.log`
 
 ## License
 
