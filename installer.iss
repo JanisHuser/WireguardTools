@@ -329,7 +329,7 @@ end;
 
 [Run]
 ; Install and start service after installation
-Filename: "powershell.exe"; Parameters: "-ExecutionPolicy Bypass -NoProfile -WindowStyle Hidden -File ""{tmp}\install_service.ps1"""; Description: "Install and start the WireGuard Network Monitor service"; Flags: postinstall
+Filename: "powershell.exe"; Parameters: "-ExecutionPolicy Bypass -NoProfile -WindowStyle Hidden -File ""{tmp}\install_service.ps1"""; Description: "Install and start the WireGuard Network Monitor service"; Flags: postinstall runascurrentuser
 
 [UninstallDelete]
 ; Clean up downloaded NSSM if it exists
