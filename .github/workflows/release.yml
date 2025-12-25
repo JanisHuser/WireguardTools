@@ -1,4 +1,4 @@
-name: Create Release Archive
+name: Create Release Archive and Installer
 
 on:
   release:
@@ -8,8 +8,8 @@ on:
       - 'v*'
 
 jobs:
-  build-and-upload:
-    runs-on: ubuntu-latest
+  build-installer:
+    runs-on: windows-latest
     permissions:
       contents: write
 
@@ -19,24 +19,46 @@ jobs:
 
       - name: Get tag name
         id: tag_name
+        shell: bash
         run: |
           if [ "${{ github.event_name }}" == "release" ]; then
             echo "TAG_NAME=${{ github.event.release.tag_name }}" >> $GITHUB_OUTPUT
+            echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
           else
-            echo "TAG_NAME=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+            TAG=${GITHUB_REF#refs/tags/}
+            echo "TAG_NAME=$TAG" >> $GITHUB_OUTPUT
+            echo "VERSION=${TAG#v}" >> $GITHUB_OUTPUT
           fi
 
-      - name: Create release archive
+      - name: Update version in InnoSetup script
+        shell: pwsh
         run: |
-          zip -r WireguardTools-${{ steps.tag_name.outputs.TAG_NAME }}.zip . \
-            -x "*.git*" \
-            -x "*node_modules*" \
-            -x "*.DS_Store"
+          $content = Get-Content installer.iss -Raw
+          $content = $content -replace '#define MyAppVersion ".*?"', '#define MyAppVersion "${{ steps.tag_name.outputs.VERSION }}"'
+          Set-Content installer.iss -Value $content
 
-      - name: Upload release asset
+      - name: Install InnoSetup
+        shell: pwsh
+        run: |
+          choco install innosetup -y
+
+      - name: Build installer with InnoSetup
+        shell: pwsh
+        run: |
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss
+
+      - name: Create source zip archive
+        shell: bash
+        run: |
+          7z a WireguardTools-${{ steps.tag_name.outputs.TAG_NAME }}-Source.zip . \
+            -x!.git -x!.github -x!installer_output -x!node_modules -x!.DS_Store
+
+      - name: Upload installer and source to release
         uses: softprops/action-gh-release@v1
         with:
           tag_name: ${{ steps.tag_name.outputs.TAG_NAME }}
-          files: WireguardTools-${{ steps.tag_name.outputs.TAG_NAME }}.zip
+          files: |
+            installer_output/WireGuardNetworkMonitor-Setup-${{ steps.tag_name.outputs.VERSION }}.exe
+            WireguardTools-${{ steps.tag_name.outputs.TAG_NAME }}-Source.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
