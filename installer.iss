@@ -50,20 +50,14 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 [Files]
 ; PowerShell Scripts
 Source: "WireGuardNetworkMonitor.ps1"; DestDir: "{app}"; Flags: ignoreversion
-Source: "Install-Service.ps1"; DestDir: "{app}"; Flags: ignoreversion
 Source: "Uninstall-Service.ps1"; DestDir: "{app}"; Flags: ignoreversion
-Source: "Test-WireGuard.ps1"; DestDir: "{app}"; Flags: ignoreversion
 
 ; Documentation
 Source: "README.md"; DestDir: "{app}"; Flags: ignoreversion isreadme
 
 [Icons]
 ; Start Menu Shortcuts
-Name: "{group}\Configure WireGuard Monitor"; Filename: "powershell.exe"; Parameters: "-ExecutionPolicy Bypass -File ""{app}\Install-Service.ps1"""; IconFilename: "{sys}\imageres.dll"; IconIndex: 1; Comment: "Install and configure the WireGuard Network Monitor service"
-Name: "{group}\Uninstall Service"; Filename: "powershell.exe"; Parameters: "-ExecutionPolicy Bypass -File ""{app}\Uninstall-Service.ps1"""; IconFilename: "{sys}\imageres.dll"; IconIndex: 78; Comment: "Remove the WireGuard Network Monitor service"
 Name: "{group}\View Logs"; Filename: "powershell.exe"; Parameters: "-NoExit -Command ""Get-Content 'C:\ProgramData\WireGuardMonitor\monitor.log' -Tail 50 -Wait"""; IconFilename: "{sys}\imageres.dll"; IconIndex: 2; Comment: "View service logs in real-time"
-Name: "{group}\Test WireGuard"; Filename: "powershell.exe"; Parameters: "-ExecutionPolicy Bypass -File ""{app}\Test-WireGuard.ps1"""; IconFilename: "{sys}\imageres.dll"; IconIndex: 76; Comment: "Test WireGuard connection"
-Name: "{group}\Open Installation Folder"; Filename: "{app}"; IconFilename: "{sys}\imageres.dll"; IconIndex: 3
 Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"; IconFilename: "{sys}\imageres.dll"; IconIndex: 78
 
 [Code]
@@ -254,10 +248,11 @@ begin
       UpdateScript := ExpandConstant('{tmp}\update_config.ps1');
       SaveStringToFile(UpdateScript,
         '$configFile = "' + ExpandConstant('{app}\WireGuardNetworkMonitor.ps1') + '"' + #13#10 +
+        '$configPath = "' + ConfigPath + '"' + #13#10 +
         '$content = Get-Content $configFile -Raw' + #13#10 +
         '$content = $content -replace ''\$HomeNetworkSSID = ".*?"'', ''$HomeNetworkSSID = "' + HomeSSID + '"''' + #13#10 +
         '$content = $content -replace ''\$HomeNetworkGateway = ".*?"'', ''$HomeNetworkGateway = "' + HomeGateway + '"''' + #13#10 +
-        '$content = $content -replace ''\$WireGuardInterface = ".*?"'', ''$WireGuardInterface = "' + TunnelName + '"''' + #13#10 +
+        '$content = $content -replace ''\$WireGuardConfigPath = ".*?"'', ''$WireGuardConfigPath = "'' + $configPath + ''"''' + #13#10 +
         'Set-Content -Path $configFile -Value $content', False);
 
       Exec('powershell.exe',
@@ -266,38 +261,40 @@ begin
 
       DeleteFile(UpdateScript);
 
-      // Create a simplified install service script
+      // Create installation script
       InstallServiceScript := ExpandConstant('{tmp}\install_service.ps1');
       SaveStringToFile(InstallServiceScript,
         '$ServiceName = "WireGuardNetworkMonitor"' + #13#10 +
         '$ScriptPath = "' + ExpandConstant('{app}\WireGuardNetworkMonitor.ps1') + '"' + #13#10 +
         '$NSSMPath = "' + ExpandConstant('{app}\nssm.exe') + '"' + #13#10 +
         '' + #13#10 +
-        '# Check if service exists and remove it' + #13#10 +
-        '$existingService = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue' + #13#10 +
-        'if ($existingService) {' + #13#10 +
+        '# Download NSSM if not present' + #13#10 +
+        'if (!(Test-Path $NSSMPath)) {' + #13#10 +
+        '    $nssmZip = "' + ExpandConstant('{tmp}') + '\nssm.zip"' + #13#10 +
+        '    Invoke-WebRequest -Uri "https://nssm.cc/release/nssm-2.24.zip" -OutFile $nssmZip -UseBasicParsing' + #13#10 +
+        '    Expand-Archive -Path $nssmZip -DestinationPath "' + ExpandConstant('{tmp}') + '" -Force' + #13#10 +
+        '    Copy-Item "' + ExpandConstant('{tmp}') + '\nssm-2.24\win64\nssm.exe" -Destination $NSSMPath' + #13#10 +
+        '}' + #13#10 +
+        '' + #13#10 +
+        '# Remove existing service' + #13#10 +
+        '$existing = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue' + #13#10 +
+        'if ($existing) {' + #13#10 +
         '    Stop-Service -Name $ServiceName -Force -ErrorAction SilentlyContinue' + #13#10 +
         '    Start-Sleep -Seconds 2' + #13#10 +
-        '    if (Test-Path $NSSMPath) {' + #13#10 +
-        '        & $NSSMPath remove $ServiceName confirm' + #13#10 +
-        '    }' + #13#10 +
+        '    & $NSSMPath remove $ServiceName confirm' + #13#10 +
         '    Start-Sleep -Seconds 2' + #13#10 +
         '}' + #13#10 +
         '' + #13#10 +
-        '# Install service with NSSM' + #13#10 +
+        '# Install and configure service' + #13#10 +
         '& $NSSMPath install $ServiceName powershell.exe "-ExecutionPolicy Bypass -NoProfile -File `"$ScriptPath`""' + #13#10 +
         '& $NSSMPath set $ServiceName DisplayName "WireGuard Network Monitor"' + #13#10 +
         '& $NSSMPath set $ServiceName Description "Automatically connects WireGuard VPN when not on home network"' + #13#10 +
         '& $NSSMPath set $ServiceName Start SERVICE_AUTO_START' + #13#10 +
-        '& $NSSMPath set $ServiceName AppStdout "C:\ProgramData\WireGuardMonitor\service-output.log"' + #13#10 +
-        '& $NSSMPath set $ServiceName AppStderr "C:\ProgramData\WireGuardMonitor\service-error.log"' + #13#10 +
+        '& $NSSMPath set $ServiceName AppStdout "C:\ProgramData\WireGuardMonitor\service.log"' + #13#10 +
+        '& $NSSMPath set $ServiceName AppStderr "C:\ProgramData\WireGuardMonitor\error.log"' + #13#10 +
         '& $NSSMPath set $ServiceName AppRotateFiles 1' + #13#10 +
         '& $NSSMPath set $ServiceName AppRotateBytes 1048576' + #13#10 +
-        '' + #13#10 +
-        '# Create log directory' + #13#10 +
         'New-Item -ItemType Directory -Path "C:\ProgramData\WireGuardMonitor" -Force | Out-Null' + #13#10 +
-        '' + #13#10 +
-        '# Start service' + #13#10 +
         'Start-Service -Name $ServiceName', False);
     end;
   end;
@@ -332,10 +329,7 @@ end;
 
 [Run]
 ; Install and start service after installation
-Filename: "powershell.exe"; Parameters: "-ExecutionPolicy Bypass -NoProfile -File ""{tmp}\install_service.ps1"""; Description: "Install and start the service now (Recommended)"; Flags: postinstall runhidden
-
-; Open README after installation (optional)
-Filename: "{app}\README.md"; Description: "View the README file"; Flags: postinstall shellexec skipifsilent unchecked nowait
+Filename: "powershell.exe"; Parameters: "-ExecutionPolicy Bypass -NoProfile -File ""{tmp}\install_service.ps1"""; Description: "Install and start the WireGuard Network Monitor service"; Flags: postinstall runhidden
 
 [UninstallDelete]
 ; Clean up downloaded NSSM if it exists

@@ -21,32 +21,34 @@ Automatically connects WireGuard VPN when you leave your home network.
 
 ## Usage
 
-Use Start Menu shortcuts:
-- **View Logs** - Real-time monitoring
-- **Configure** - Change settings
-- **Uninstall** - Remove service
+**View Logs:**
+- Start Menu → "WireGuard Network Monitor" → "View Logs"
+- Or: `C:\ProgramData\WireGuardMonitor\monitor.log`
 
-Or use PowerShell:
+**PowerShell Commands:**
 ```powershell
 Get-Service WireGuardNetworkMonitor          # Check status
-Restart-Service WireGuardNetworkMonitor      # Restart
+Restart-Service WireGuardNetworkMonitor      # Restart service
+Stop-Service WireGuardNetworkMonitor         # Stop service
 ```
 
 ## Troubleshooting
 
 **Service won't start?**
-- Check logs: Start Menu → "View Logs"
+- Check logs in Start Menu → "View Logs"
 - Verify WireGuard is installed
 
 **VPN not connecting?**
-- Test WireGuard manually first
-- Check logs for errors
+- Test WireGuard tunnel manually first
+- Check logs for error messages
 
-**Wrong network detection?**
-- Reconfigure from Start Menu
-- Verify home SSID is correct (case-sensitive)
-
-Logs: `C:\ProgramData\WireGuardMonitor\monitor.log`
+**Need to reconfigure?**
+- Edit `C:\Program Files (x86)\WireGuardMonitor\WireGuardNetworkMonitor.ps1`
+- Update these values:
+  - `$HomeNetworkSSID` - Your home WiFi name
+  - `$HomeNetworkGateway` - Your home router IP
+  - `$WireGuardConfigPath` - Path to your .conf file
+- Restart: `Restart-Service WireGuardNetworkMonitor`
 
 ## License
 

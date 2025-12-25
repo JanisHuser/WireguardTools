@@ -4,7 +4,7 @@
 # Configuration - MODIFY THESE VALUES
 $HomeNetworkSSID = "YourHomeWiFiName"  # Your home WiFi SSID
 $HomeNetworkGateway = "192.168.1.1"    # Your home router's IP (alternative check)
-$WireGuardInterface = "wg0"            # Your WireGuard interface name (must match tunnel name in WireGuard app)
+$WireGuardConfigPath = "C:\Program Files\WireGuard\Data\Configurations\wg0.conf"  # Full path to your WireGuard .conf file
 $LogPath = "C:\ProgramData\WireGuardMonitor\monitor.log"
 
 # Ensure log directory exists
@@ -83,23 +83,26 @@ function Test-HomeNetwork {
 
 function Get-WireGuardStatus {
     try {
+        # Extract tunnel name from config path
+        $tunnelName = [System.IO.Path]::GetFileNameWithoutExtension($WireGuardConfigPath)
+
         # Check if the WireGuard service is running
-        $serviceName = "WireGuardTunnel`$$WireGuardInterface"
+        $serviceName = "WireGuardTunnel`$$tunnelName"
         $service = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
-        
+
         if ($service -and $service.Status -eq 'Running') {
             return $true
         }
-        
+
         # Alternative: Check using wg.exe command
         $wgPath = "C:\Program Files\WireGuard\wg.exe"
         if (Test-Path $wgPath) {
-            $wgOutput = & $wgPath show $WireGuardInterface 2>&1
+            $wgOutput = & $wgPath show $tunnelName 2>&1
             if ($wgOutput -notmatch "Unable to access interface" -and $wgOutput -notmatch "does not exist") {
                 return $true
             }
         }
-        
+
         return $false
     } catch {
         Write-Log "Error checking WireGuard status: $_"
@@ -109,7 +112,8 @@ function Get-WireGuardStatus {
 
 function Start-WireGuardTunnel {
     try {
-        Write-Log "Starting WireGuard tunnel: $WireGuardInterface"
+        $tunnelName = [System.IO.Path]::GetFileNameWithoutExtension($WireGuardConfigPath)
+        Write-Log "Starting WireGuard tunnel: $tunnelName"
 
         # Use wireguard.exe CLI with /installtunnelservice
         $wireguardCLI = "C:\Program Files\WireGuard\wireguard.exe"
@@ -118,14 +122,13 @@ function Start-WireGuardTunnel {
             return $false
         }
 
-        # Build the full path to the config file
-        $configPath = "C:\Program Files\WireGuard\Data\Configurations\$WireGuardInterface.conf"
-        if (!(Test-Path $configPath)) {
-            Write-Log "ERROR: Config file not found at $configPath"
+        # Verify config file exists
+        if (!(Test-Path $WireGuardConfigPath)) {
+            Write-Log "ERROR: Config file not found at $WireGuardConfigPath"
             return $false
         }
 
-        $result = & $wireguardCLI /installtunnelservice "`"$configPath`"" 2>&1
+        $result = & $wireguardCLI /installtunnelservice "`"$WireGuardConfigPath`"" 2>&1
         Write-Log "WireGuard CLI output: $result"
 
         Start-Sleep -Seconds 5
@@ -137,7 +140,7 @@ function Start-WireGuardTunnel {
             Write-Log "WireGuard tunnel failed to start - checking for errors..."
 
             # Try to get more error details
-            $serviceName = "WireGuardTunnel`$$WireGuardInterface"
+            $serviceName = "WireGuardTunnel`$$tunnelName"
             $service = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
             if ($service) {
                 Write-Log "Service status: $($service.Status)"
@@ -159,7 +162,8 @@ function Start-WireGuardTunnel {
 
 function Stop-WireGuardTunnel {
     try {
-        Write-Log "Stopping WireGuard tunnel: $WireGuardInterface"
+        $tunnelName = [System.IO.Path]::GetFileNameWithoutExtension($WireGuardConfigPath)
+        Write-Log "Stopping WireGuard tunnel: $tunnelName"
 
         # Use wireguard.exe CLI with /uninstalltunnelservice
         $wireguardCLI = "C:\Program Files\WireGuard\wireguard.exe"
@@ -168,7 +172,7 @@ function Stop-WireGuardTunnel {
             return $false
         }
 
-        $result = & $wireguardCLI /uninstalltunnelservice $WireGuardInterface 2>&1
+        $result = & $wireguardCLI /uninstalltunnelservice $tunnelName 2>&1
         Write-Log "WireGuard CLI output: $result"
 
         Start-Sleep -Seconds 3
