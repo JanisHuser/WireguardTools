@@ -39,7 +39,6 @@ UninstallDisplayIcon={app}\WireGuardNetworkMonitor.ps1
 
 ; License and Information
 LicenseFile=LICENSE.txt
-InfoBeforeFile=README.md
 
 ; Architecture
 ArchitecturesAllowed=x64
@@ -69,11 +68,67 @@ Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"; 
 
 [Code]
 var
-  InstallServicePage: TInputOptionWizardPage;
   ConfigFilePage: TInputFileWizardPage;
+  NetworkConfigPage: TInputQueryWizardPage;
   ResultCode: Integer;
   WireGuardConfigPath: String;
   TunnelName: String;
+  DetectedSSID: String;
+  DetectedGateway: String;
+
+function DetectSSID: String;
+var
+  ResultCode: Integer;
+  OutputFile: String;
+  Lines: TArrayOfString;
+  I: Integer;
+  Line: String;
+begin
+  Result := '';
+  OutputFile := ExpandConstant('{tmp}\ssid_output.txt');
+
+  if Exec('cmd.exe', '/c netsh wlan show interfaces > "' + OutputFile + '"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+  begin
+    if LoadStringsFromFile(OutputFile, Lines) then
+    begin
+      for I := 0 to GetArrayLength(Lines) - 1 do
+      begin
+        Line := Trim(Lines[I]);
+        if Pos('SSID', Line) = 1 then
+        begin
+          Delete(Line, 1, Pos(':', Line));
+          Result := Trim(Line);
+          Break;
+        end;
+      end;
+    end;
+    DeleteFile(OutputFile);
+  end;
+end;
+
+function DetectGateway: String;
+var
+  ResultCode: Integer;
+  TempScript: String;
+  OutputFile: String;
+  Gateway: String;
+begin
+  Result := '';
+  TempScript := ExpandConstant('{tmp}\get_gateway.ps1');
+  OutputFile := ExpandConstant('{tmp}\gateway.txt');
+
+  SaveStringToFile(TempScript,
+    '$gateway = (Get-NetRoute -DestinationPrefix "0.0.0.0/0" -ErrorAction SilentlyContinue | Select-Object -First 1).NextHop' + #13#10 +
+    'if ($gateway) { $gateway | Out-File "' + OutputFile + '" -Encoding UTF8 }', False);
+
+  if Exec('powershell.exe', '-ExecutionPolicy Bypass -NoProfile -File "' + TempScript + '"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+  begin
+    if LoadStringFromFile(OutputFile, Gateway) then
+      Result := Trim(Gateway);
+    DeleteFile(OutputFile);
+  end;
+  DeleteFile(TempScript);
+end;
 
 procedure InitializeWizard;
 begin
@@ -85,15 +140,33 @@ begin
     'WireGuard Config Files|*.conf|All Files|*.*',
     '.conf');
 
-  // Create a custom page asking if user wants to install service now
-  InstallServicePage := CreateInputOptionPage(ConfigFilePage.ID,
-    'Service Installation', 'Do you want to install and configure the service now?',
-    'The installer can automatically configure and start the WireGuard Network Monitor service. ' +
-    'If you choose "No", you can run the installation later from the Start Menu.',
-    True, False);
-  InstallServicePage.Add('Install and configure the service now (Recommended)');
-  InstallServicePage.Add('Skip service installation (I will configure it manually later)');
-  InstallServicePage.Values[0] := True;
+  // Create network configuration page
+  NetworkConfigPage := CreateInputQueryPage(ConfigFilePage.ID,
+    'Network Configuration', 'Configure your home network settings',
+    'The service needs to know your home network to determine when to connect WireGuard.');
+
+  NetworkConfigPage.Add('Home WiFi SSID:', False);
+  NetworkConfigPage.Add('Home Gateway IP:', False);
+end;
+
+procedure CurPageChanged(CurPageID: Integer);
+begin
+  if CurPageID = NetworkConfigPage.ID then
+  begin
+    // Auto-detect network settings when the page is shown
+    DetectedSSID := DetectSSID;
+    DetectedGateway := DetectGateway;
+
+    if DetectedSSID <> '' then
+      NetworkConfigPage.Values[0] := DetectedSSID
+    else
+      NetworkConfigPage.Values[0] := 'YourHomeWiFiName';
+
+    if DetectedGateway <> '' then
+      NetworkConfigPage.Values[1] := DetectedGateway
+    else
+      NetworkConfigPage.Values[1] := '192.168.1.1';
+  end;
 end;
 
 function PrepareToInstall(var NeedsRestart: Boolean): String;
@@ -147,10 +220,6 @@ begin
       Result := 'Failed to copy configuration file. Please check permissions.';
       Exit;
     end;
-  end
-  else if InstallServicePage.Values[0] then
-  begin
-    Result := 'No WireGuard configuration file selected. Please select a .conf file to continue.';
   end;
 end;
 
@@ -159,10 +228,16 @@ var
   ConfigPath: String;
   UpdateScript: String;
   BackupConfigPath: String;
+  InstallServiceScript: String;
+  HomeSSID: String;
+  HomeGateway: String;
 begin
   if CurStep = ssPostInstall then
   begin
-    // Update WireGuardNetworkMonitor.ps1 with the tunnel name and copy config to app folder
+    HomeSSID := NetworkConfigPage.Values[0];
+    HomeGateway := NetworkConfigPage.Values[1];
+
+    // Update WireGuardNetworkMonitor.ps1 with all configuration
     if TunnelName <> '' then
     begin
       ConfigPath := WireGuardConfigPath + '\' + TunnelName + '.conf';
@@ -175,11 +250,13 @@ begin
         Log('Config file backed up to: ' + BackupConfigPath);
       end;
 
-      // Create a temporary PowerShell script to update the config
+      // Create a temporary PowerShell script to update all configuration
       UpdateScript := ExpandConstant('{tmp}\update_config.ps1');
       SaveStringToFile(UpdateScript,
         '$configFile = "' + ExpandConstant('{app}\WireGuardNetworkMonitor.ps1') + '"' + #13#10 +
         '$content = Get-Content $configFile -Raw' + #13#10 +
+        '$content = $content -replace ''\$HomeNetworkSSID = ".*?"'', ''$HomeNetworkSSID = "' + HomeSSID + '"''' + #13#10 +
+        '$content = $content -replace ''\$HomeNetworkGateway = ".*?"'', ''$HomeNetworkGateway = "' + HomeGateway + '"''' + #13#10 +
         '$content = $content -replace ''\$WireGuardInterface = ".*?"'', ''$WireGuardInterface = "' + TunnelName + '"''' + #13#10 +
         'Set-Content -Path $configFile -Value $content', False);
 
@@ -188,26 +265,47 @@ begin
            '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
 
       DeleteFile(UpdateScript);
-    end;
 
-    // If user chose to install service now
-    if InstallServicePage.Values[0] then
-    begin
-      // Run Install-Service.ps1 with admin privileges
-      if Exec('powershell.exe',
-              '-ExecutionPolicy Bypass -NoProfile -File "' + ExpandConstant('{app}\Install-Service.ps1') + '"',
-              '', SW_SHOW, ewWaitUntilTerminated, ResultCode) then
-      begin
-        if ResultCode = 0 then
-          MsgBox('Service installation completed successfully!' + #13#10 +
-                 'WireGuard tunnel: ' + TunnelName, mbInformation, MB_OK)
-        else
-          MsgBox('Service installation encountered some issues. Please check the installation window for details.', mbError, MB_OK);
-      end
-      else
-        MsgBox('Failed to run service installation script.', mbError, MB_OK);
+      // Create a simplified install service script
+      InstallServiceScript := ExpandConstant('{tmp}\install_service.ps1');
+      SaveStringToFile(InstallServiceScript,
+        '$ServiceName = "WireGuardNetworkMonitor"' + #13#10 +
+        '$ScriptPath = "' + ExpandConstant('{app}\WireGuardNetworkMonitor.ps1') + '"' + #13#10 +
+        '$NSSMPath = "' + ExpandConstant('{app}\nssm.exe') + '"' + #13#10 +
+        '' + #13#10 +
+        '# Check if service exists and remove it' + #13#10 +
+        '$existingService = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue' + #13#10 +
+        'if ($existingService) {' + #13#10 +
+        '    Stop-Service -Name $ServiceName -Force -ErrorAction SilentlyContinue' + #13#10 +
+        '    Start-Sleep -Seconds 2' + #13#10 +
+        '    if (Test-Path $NSSMPath) {' + #13#10 +
+        '        & $NSSMPath remove $ServiceName confirm' + #13#10 +
+        '    }' + #13#10 +
+        '    Start-Sleep -Seconds 2' + #13#10 +
+        '}' + #13#10 +
+        '' + #13#10 +
+        '# Install service with NSSM' + #13#10 +
+        '& $NSSMPath install $ServiceName powershell.exe "-ExecutionPolicy Bypass -NoProfile -File `"$ScriptPath`""' + #13#10 +
+        '& $NSSMPath set $ServiceName DisplayName "WireGuard Network Monitor"' + #13#10 +
+        '& $NSSMPath set $ServiceName Description "Automatically connects WireGuard VPN when not on home network"' + #13#10 +
+        '& $NSSMPath set $ServiceName Start SERVICE_AUTO_START' + #13#10 +
+        '& $NSSMPath set $ServiceName AppStdout "C:\ProgramData\WireGuardMonitor\service-output.log"' + #13#10 +
+        '& $NSSMPath set $ServiceName AppStderr "C:\ProgramData\WireGuardMonitor\service-error.log"' + #13#10 +
+        '& $NSSMPath set $ServiceName AppRotateFiles 1' + #13#10 +
+        '& $NSSMPath set $ServiceName AppRotateBytes 1048576' + #13#10 +
+        '' + #13#10 +
+        '# Create log directory' + #13#10 +
+        'New-Item -ItemType Directory -Path "C:\ProgramData\WireGuardMonitor" -Force | Out-Null' + #13#10 +
+        '' + #13#10 +
+        '# Start service' + #13#10 +
+        'Start-Service -Name $ServiceName', False);
     end;
   end;
+end;
+
+function GetTunnelName(Param: String): String;
+begin
+  Result := TunnelName;
 end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
@@ -233,8 +331,11 @@ begin
 end;
 
 [Run]
+; Install and start service after installation
+Filename: "powershell.exe"; Parameters: "-ExecutionPolicy Bypass -NoProfile -File ""{tmp}\install_service.ps1"""; Description: "Install and start the service now (Recommended)"; Flags: postinstall runhidden
+
 ; Open README after installation (optional)
-Filename: "{app}\README.md"; Description: "View the README file"; Flags: postinstall shellexec skipifsilent unchecked
+Filename: "{app}\README.md"; Description: "View the README file"; Flags: postinstall shellexec skipifsilent unchecked nowait
 
 [UninstallDelete]
 ; Clean up downloaded NSSM if it exists

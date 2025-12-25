@@ -3,6 +3,10 @@
 
 #Requires -RunAsAdministrator
 
+param(
+    [string]$PresetTunnelName = ""
+)
+
 $ServiceName = "WireGuardNetworkMonitor"
 $ServiceDisplayName = "WireGuard Network Monitor"
 $ServiceDescription = "Automatically connects WireGuard VPN when not on home network"
@@ -160,39 +164,47 @@ if ($useDetected -eq "Y" -or $useDetected -eq "y") {
 }
 
 # Get WireGuard interface name
-Write-Host ""
-Write-Host "Available WireGuard configuration files:" -ForegroundColor Cyan
-$configPath = "C:\Program Files\WireGuard\Data\Configurations"
-$configFiles = @()
-if (Test-Path $configPath) {
-    $configFiles = Get-ChildItem -Path $configPath -Filter "*.conf" -ErrorAction SilentlyContinue
-    if ($configFiles) {
-        foreach ($file in $configFiles) {
-            $tunnelName = [System.IO.Path]::GetFileNameWithoutExtension($file.Name)
-            Write-Host "  - $tunnelName" -ForegroundColor White
+if ($PresetTunnelName) {
+    # Tunnel name was provided by installer
+    $wgInterface = $PresetTunnelName
+    Write-Host ""
+    Write-Host "Using WireGuard tunnel: $wgInterface" -ForegroundColor Cyan
+} else {
+    # Manual installation - ask user
+    Write-Host ""
+    Write-Host "Available WireGuard configuration files:" -ForegroundColor Cyan
+    $configPath = "C:\Program Files\WireGuard\Data\Configurations"
+    $configFiles = @()
+    if (Test-Path $configPath) {
+        $configFiles = Get-ChildItem -Path $configPath -Filter "*.conf" -ErrorAction SilentlyContinue
+        if ($configFiles) {
+            foreach ($file in $configFiles) {
+                $tunnelName = [System.IO.Path]::GetFileNameWithoutExtension($file.Name)
+                Write-Host "  - $tunnelName" -ForegroundColor White
+            }
+        } else {
+            Write-Host "  No WireGuard configuration files found" -ForegroundColor Yellow
         }
     } else {
-        Write-Host "  No WireGuard configuration files found" -ForegroundColor Yellow
+        Write-Host "  WireGuard configuration directory not found" -ForegroundColor Yellow
     }
-} else {
-    Write-Host "  WireGuard configuration directory not found" -ForegroundColor Yellow
-}
 
-# Check for running services as well
-Write-Host ""
-Write-Host "Available WireGuard tunnel services:" -ForegroundColor Cyan
-$wgServices = Get-Service -Name "WireGuardTunnel*" -ErrorAction SilentlyContinue
-if ($wgServices) {
-    foreach ($svc in $wgServices) {
-        $tunnelName = $svc.Name -replace "WireGuardTunnel\$", ""
-        Write-Host "  - $tunnelName [$($svc.Status)]" -ForegroundColor White
+    # Check for running services as well
+    Write-Host ""
+    Write-Host "Available WireGuard tunnel services:" -ForegroundColor Cyan
+    $wgServices = Get-Service -Name "WireGuardTunnel*" -ErrorAction SilentlyContinue
+    if ($wgServices) {
+        foreach ($svc in $wgServices) {
+            $tunnelName = $svc.Name -replace "WireGuardTunnel\$", ""
+            Write-Host "  - $tunnelName [$($svc.Status)]" -ForegroundColor White
+        }
+    } else {
+        Write-Host "  No WireGuard tunnel services found" -ForegroundColor Yellow
     }
-} else {
-    Write-Host "  No WireGuard tunnel services found" -ForegroundColor Yellow
-}
 
-Write-Host ""
-$wgInterface = Read-Host "Enter your WireGuard tunnel name (e.g., wg0)"
+    Write-Host ""
+    $wgInterface = Read-Host "Enter your WireGuard tunnel name (e.g., wg0)"
+}
 
 # Update WireGuardNetworkMonitor.ps1 with detected settings
 Write-Host ""

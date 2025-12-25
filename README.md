@@ -1,104 +1,53 @@
 # WireGuard Network Monitor
 
-Automatically connects your WireGuard VPN tunnel when you're not on your home network.
-
-## Features
-
-- Detects when you're on your home network (WiFi SSID or gateway IP)
-- Automatically connects WireGuard on external networks
-- Automatically disconnects WireGuard when returning home
-- Runs as a Windows service (starts on boot)
-- Comprehensive logging
+Automatically connects WireGuard VPN when you leave your home network.
 
 ## Installation
 
-### Using the Installer (Recommended)
+1. Download the installer from [Releases](https://github.com/JanisHuser/WireguardTools/releases)
+2. Run `WireGuardNetworkMonitor-Setup.exe` as Administrator
+3. Select your WireGuard `.conf` file
+4. Confirm your home network settings (auto-detected)
+5. Done!
 
-1. **Download** the latest installer from the [Releases](https://github.com/JanisHuser/WireguardTools/releases) page
-2. **Run** `WireGuardNetworkMonitor-Setup-x.x.x.exe` as Administrator
-3. **Select** your WireGuard `.conf` file when prompted
-4. **Configure** your home network settings (auto-detected)
-5. Done! The service is now running.
-
-### Prerequisites
-
-- Windows 10/11 (64-bit)
-- WireGuard installed ([download here](https://www.wireguard.com/install/))
-- WireGuard configuration file (.conf)
-- Administrator privileges
-
-### Manual Installation
-
-If you prefer to install manually:
-
-1. Download the source code
-2. Open PowerShell as Administrator
-3. Run `.\Install-Service.ps1`
-4. Follow the prompts
-
-## Usage
-
-All management can be done through the Start Menu shortcuts:
-
-- **Configure WireGuard Monitor** - Reconfigure the service
-- **View Logs** - Watch real-time service logs
-- **Test WireGuard** - Test your WireGuard connection
-- **Uninstall Service** - Remove the service
-
-### PowerShell Commands
-
-```powershell
-# Check service status
-Get-Service WireGuardNetworkMonitor
-
-# View logs
-Get-Content C:\ProgramData\WireGuardMonitor\monitor.log -Tail 50
-
-# Restart service (after config changes)
-Restart-Service WireGuardNetworkMonitor
-```
+**Requirements:** Windows 10/11 (64-bit), WireGuard installed
 
 ## How It Works
 
-1. **Network Detection**: Checks every 30 seconds if you're on your home network
-   - Compares WiFi SSID
-   - Compares default gateway IP
+- Detects home network by WiFi SSID or gateway IP
+- Automatically connects WireGuard on external networks
+- Automatically disconnects WireGuard when home
+- Runs as a Windows service (starts on boot)
 
-2. **Automatic Connection**:
-   - Home network → Disconnects WireGuard
-   - External network → Connects WireGuard
+## Usage
 
-3. **Event-Based**: Responds immediately to network changes
+Use Start Menu shortcuts:
+- **View Logs** - Real-time monitoring
+- **Configure** - Change settings
+- **Uninstall** - Remove service
+
+Or use PowerShell:
+```powershell
+Get-Service WireGuardNetworkMonitor          # Check status
+Restart-Service WireGuardNetworkMonitor      # Restart
+```
 
 ## Troubleshooting
 
-### Service Won't Start
+**Service won't start?**
+- Check logs: Start Menu → "View Logs"
+- Verify WireGuard is installed
 
-1. Check logs in Start Menu → "View Logs"
-2. Verify WireGuard is installed
-3. Ensure your .conf file exists in `C:\Program Files\WireGuard\Data\Configurations\`
+**VPN not connecting?**
+- Test WireGuard manually first
+- Check logs for errors
 
-### WireGuard Not Connecting
+**Wrong network detection?**
+- Reconfigure from Start Menu
+- Verify home SSID is correct (case-sensitive)
 
-1. Test WireGuard manually through the GUI first
-2. Check logs for error messages
-3. Verify the tunnel name matches your configuration file
-
-### Wrong Network Detection
-
-1. Reconfigure using Start Menu → "Configure WireGuard Monitor"
-2. Verify home SSID is correct (case-sensitive)
-3. Check logs to see detected values
-
-## Logs Location
-
-- Monitor log: `C:\ProgramData\WireGuardMonitor\monitor.log`
-- Service errors: `C:\ProgramData\WireGuardMonitor\service-error.log`
+Logs: `C:\ProgramData\WireGuardMonitor\monitor.log`
 
 ## License
 
-MIT License - See [LICENSE.txt](LICENSE.txt)
-
-## Contributing
-
-Issues and pull requests are welcome at [GitHub](https://github.com/JanisHuser/WireguardTools)
+MIT License - [LICENSE.txt](LICENSE.txt)
