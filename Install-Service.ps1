@@ -100,7 +100,78 @@ $nssmInstallArgs = @(
 & $NSSMPath set $ServiceName AppRotateFiles 1
 & $NSSMPath set $ServiceName AppRotateBytes 1048576
 
-Write-Host "Step 4: Starting service..." -ForegroundColor Yellow
+Write-Host "Step 4: Configuring network settings..." -ForegroundColor Yellow
+Write-Host ""
+
+# Detect current network SSID
+$detectedSSID = "Unknown"
+try {
+    $wifiProfiles = netsh wlan show interfaces
+    if ($wifiProfiles -match "SSID\s+:\s+(.+)") {
+        $detectedSSID = $matches[1].Trim()
+    }
+} catch {
+    Write-Host "Warning: Could not detect WiFi SSID" -ForegroundColor Yellow
+}
+
+# Detect current gateway
+$detectedGateway = "Unknown"
+try {
+    $gateway = (Get-NetRoute -DestinationPrefix "0.0.0.0/0" -ErrorAction SilentlyContinue |
+               Select-Object -First 1).NextHop
+    if ($gateway) {
+        $detectedGateway = $gateway
+    }
+} catch {
+    Write-Host "Warning: Could not detect gateway" -ForegroundColor Yellow
+}
+
+# Display detected settings
+Write-Host "Detected Network Settings:" -ForegroundColor Cyan
+Write-Host "  Current WiFi SSID: $detectedSSID" -ForegroundColor White
+Write-Host "  Current Gateway: $detectedGateway" -ForegroundColor White
+Write-Host ""
+
+# Confirm with user
+$useDetected = Read-Host "Use these settings as your home network? (Y/N)"
+if ($useDetected -eq "Y" -or $useDetected -eq "y") {
+    $homeSSID = $detectedSSID
+    $homeGateway = $detectedGateway
+} else {
+    Write-Host ""
+    $homeSSID = Read-Host "Enter your home WiFi SSID"
+    $homeGateway = Read-Host "Enter your home gateway IP (e.g., 192.168.1.1)"
+}
+
+# Get WireGuard interface name
+Write-Host ""
+Write-Host "Available WireGuard tunnels:" -ForegroundColor Cyan
+$wgServices = Get-Service -Name "WireGuardTunnel*" -ErrorAction SilentlyContinue
+if ($wgServices) {
+    foreach ($svc in $wgServices) {
+        $tunnelName = $svc.Name -replace "WireGuardTunnel\$", ""
+        Write-Host "  - $tunnelName" -ForegroundColor White
+    }
+} else {
+    Write-Host "  No WireGuard tunnels found" -ForegroundColor Yellow
+}
+Write-Host ""
+$wgInterface = Read-Host "Enter your WireGuard tunnel name (e.g., wg0)"
+
+# Update WireGuardNetworkMonitor.ps1 with detected settings
+Write-Host ""
+Write-Host "Updating configuration in WireGuardNetworkMonitor.ps1..." -ForegroundColor Yellow
+
+$configContent = Get-Content $ScriptPath -Raw
+$configContent = $configContent -replace '\$HomeNetworkSSID = ".*?"', "`$HomeNetworkSSID = `"$homeSSID`""
+$configContent = $configContent -replace '\$HomeNetworkGateway = ".*?"', "`$HomeNetworkGateway = `"$homeGateway`""
+$configContent = $configContent -replace '\$WireGuardInterface = ".*?"', "`$WireGuardInterface = `"$wgInterface`""
+Set-Content -Path $ScriptPath -Value $configContent
+
+Write-Host "Configuration updated successfully!" -ForegroundColor Green
+Write-Host ""
+
+Write-Host "Step 5: Starting service..." -ForegroundColor Yellow
 Start-Service -Name $ServiceName
 
 Start-Sleep -Seconds 2
@@ -111,15 +182,13 @@ if ($service.Status -eq "Running") {
     Write-Host "=== Installation Complete ===" -ForegroundColor Green
     Write-Host "Service Name: $ServiceName" -ForegroundColor Cyan
     Write-Host "Status: Running" -ForegroundColor Green
+    Write-Host ""
+    Write-Host "Configuration:" -ForegroundColor Cyan
+    Write-Host "  Home WiFi SSID: $homeSSID" -ForegroundColor White
+    Write-Host "  Home Gateway: $homeGateway" -ForegroundColor White
+    Write-Host "  WireGuard Interface: $wgInterface" -ForegroundColor White
+    Write-Host ""
     Write-Host "Log Location: C:\ProgramData\WireGuardMonitor\monitor.log" -ForegroundColor Cyan
-    Write-Host ""
-    Write-Host "IMPORTANT: Edit WireGuardNetworkMonitor.ps1 and configure:" -ForegroundColor Yellow
-    Write-Host "  - HomeNetworkSSID: Your home WiFi name" -ForegroundColor Gray
-    Write-Host "  - HomeNetworkGateway: Your home router IP" -ForegroundColor Gray
-    Write-Host "  - WireGuardInterface: Your WireGuard tunnel name" -ForegroundColor Gray
-    Write-Host ""
-    Write-Host "After editing, restart the service with:" -ForegroundColor Yellow
-    Write-Host "  Restart-Service $ServiceName" -ForegroundColor Gray
 } else {
     Write-Host ""
     Write-Host "WARNING: Service installed but not running!" -ForegroundColor Yellow

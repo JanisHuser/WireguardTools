@@ -81,27 +81,32 @@ function Get-WireGuardStatus {
 function Start-WireGuardTunnel {
     try {
         Write-Log "Starting WireGuard tunnel: $WireGuardInterface"
-        
-        # Method 1: Try using wireguard.exe CLI (newer versions)
+
+        # Use wireguard.exe CLI with /installtunnelservice
         $wireguardCLI = "C:\Program Files\WireGuard\wireguard.exe"
-        if (Test-Path $wireguardCLI) {
-            $result = & $wireguardCLI /installtunnelservice $WireGuardInterface 2>&1
-            Write-Log "WireGuard CLI output: $result"
-        } else {
-            # Method 2: Try starting the service directly
-            $serviceName = "WireGuardTunnel`$$WireGuardInterface"
-            Write-Log "Attempting to start service: $serviceName"
-            Start-Service -Name $serviceName -ErrorAction Stop
+        if (!(Test-Path $wireguardCLI)) {
+            Write-Log "ERROR: wireguard.exe not found at $wireguardCLI"
+            return $false
         }
-        
+
+        # Build the full path to the config file
+        $configPath = "C:\Program Files\WireGuard\Data\Configurations\$WireGuardInterface.conf"
+        if (!(Test-Path $configPath)) {
+            Write-Log "ERROR: Config file not found at $configPath"
+            return $false
+        }
+
+        $result = & $wireguardCLI /installtunnelservice "`"$configPath`"" 2>&1
+        Write-Log "WireGuard CLI output: $result"
+
         Start-Sleep -Seconds 5
-        
+
         if (Get-WireGuardStatus) {
             Write-Log "WireGuard tunnel started successfully"
             return $true
         } else {
             Write-Log "WireGuard tunnel failed to start - checking for errors..."
-            
+
             # Try to get more error details
             $serviceName = "WireGuardTunnel`$$WireGuardInterface"
             $service = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
@@ -113,7 +118,7 @@ function Start-WireGuardTunnel {
                     Write-Log "  - $($_.Name) [$($_.Status)]"
                 }
             }
-            
+
             return $false
         }
     } catch {
@@ -126,19 +131,17 @@ function Start-WireGuardTunnel {
 function Stop-WireGuardTunnel {
     try {
         Write-Log "Stopping WireGuard tunnel: $WireGuardInterface"
-        
-        # Method 1: Try using wireguard.exe CLI
+
+        # Use wireguard.exe CLI with /uninstalltunnelservice
         $wireguardCLI = "C:\Program Files\WireGuard\wireguard.exe"
-        if (Test-Path $wireguardCLI) {
-            $result = & $wireguardCLI /uninstalltunnelservice $WireGuardInterface 2>&1
-            Write-Log "WireGuard CLI output: $result"
-        } else {
-            # Method 2: Try stopping the service directly
-            $serviceName = "WireGuardTunnel`$$WireGuardInterface"
-            Write-Log "Attempting to stop service: $serviceName"
-            Stop-Service -Name $serviceName -Force -ErrorAction Stop
+        if (!(Test-Path $wireguardCLI)) {
+            Write-Log "ERROR: wireguard.exe not found at $wireguardCLI"
+            return $false
         }
-        
+
+        $result = & $wireguardCLI /uninstalltunnelservice $WireGuardInterface 2>&1
+        Write-Log "WireGuard CLI output: $result"
+
         Start-Sleep -Seconds 3
         Write-Log "WireGuard tunnel stopped"
         return $true
