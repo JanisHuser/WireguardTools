@@ -262,10 +262,11 @@ begin
         '}' + #13#10 +
         '' + #13#10 +
         'Write-InstallLog "Installing service with NSSM"' + #13#10 +
-        '$installResult = & $NSSMPath install $ServiceName powershell.exe "-ExecutionPolicy Bypass -NoProfile -File `"$ScriptPath`"" 2>&1' + #13#10 +
+        '$installResult = & $NSSMPath install $ServiceName powershell.exe 2>&1' + #13#10 +
         'Write-InstallLog "NSSM install output: $installResult"' + #13#10 +
         '' + #13#10 +
-        'Write-InstallLog "Configuring service"' + #13#10 +
+        'Write-InstallLog "Configuring service parameters"' + #13#10 +
+        '& $NSSMPath set $ServiceName AppParameters "-ExecutionPolicy Bypass -NoProfile -File `"$ScriptPath`"" | Out-Null' + #13#10 +
         '& $NSSMPath set $ServiceName DisplayName "WireGuard Network Monitor" | Out-Null' + #13#10 +
         '& $NSSMPath set $ServiceName Description "Automatically connects WireGuard VPN when not on home network" | Out-Null' + #13#10 +
         '& $NSSMPath set $ServiceName Start SERVICE_AUTO_START | Out-Null' + #13#10 +
