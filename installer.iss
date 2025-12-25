@@ -111,7 +111,7 @@ var
   ResultCode: Integer;
   TempScript: String;
   OutputFile: String;
-  Gateway: String;
+  Gateway: AnsiString;
 begin
   Result := '';
   TempScript := ExpandConstant('{tmp}\get_gateway.ps1');
@@ -124,7 +124,7 @@ begin
   if Exec('powershell.exe', '-ExecutionPolicy Bypass -NoProfile -File "' + TempScript + '"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
   begin
     if LoadStringFromFile(OutputFile, Gateway) then
-      Result := Trim(Gateway);
+      Result := Trim(String(Gateway));
     DeleteFile(OutputFile);
   end;
   DeleteFile(TempScript);
